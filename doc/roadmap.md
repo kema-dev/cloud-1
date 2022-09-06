@@ -1,3 +1,7 @@
 # roadmap
 
-* use a vault (ansible_vault ?) to store ubuntu password / 42 api credentials
+* Create security group automatically
+* Check variables against existing resources
+* Create SSH key automatically ?
+* Make a secrets.yaml generator
+* Use ansible vault ?

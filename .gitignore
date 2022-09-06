@@ -1,1 +1,3 @@
 ssh/
+docker.env
+secret.*
