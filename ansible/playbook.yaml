@@ -1,97 +1,110 @@
-- name: Run ft_transcendence
+- name: Spawn EC2 instance and configure it
   hosts: localhost
+  connection: local
+  gather_facts: false
   vars_files:
-    - secret.yaml
+    - secret/secret.yaml
   tasks:
     # - name: Get Running instances infos
-    #   ansible.builtin.ec2_instance_info:
+    #   amazon.aws.ec2_instance_info:
     #   register: ec2info
 
-    # - name: Create EC2 Instance
-    #   amazon.aws.ec2_instance:
-    #     name: "{{ EC2_NAME }}"
-    #     key_name: "{{ KEY_NAME }}"
-    #     instance_type: "{{ INSTANCE_TYPE }}"
-    #     security_group: "{{ SECURITY_GROUP }}"
-    #     network:
-    #       assign_public_ip: true
-    #     image_id: "{{ IMAGE_ID }}"
-    #     tags:
-    #       environment: "{{ ENVIRONMENT_TAG }}"
-    #   register: ec2_new_instance
+    - name: Spawn EC2 Instance
+      amazon.aws.ec2_instance:
+        name: "{{ EC2_NAME }}"
+        key_name: "{{ KEY_NAME }}"
+        instance_type: "{{ INSTANCE_TYPE }}"
+        security_group: "{{ SECURITY_GROUP }}"
+        network:
+          assign_public_ip: true
+        image_id: "{{ IMAGE_ID }}"
+        tags:
+          environment: "{{ ENVIRONMENT_TAG }}"
+        wait: true
+      register: ec2_new_instance
 
-    # - name: Gather information about a particular instance using ID
-    #   amazon.aws.ec2_instance_info:
-    #     instance_ids:
-    #       - "{{  }}"
-    #   register: ec2_instance_info
+    # Need to wait for the instance to be ready
 
-    - name: Display the JSON file content
-      ansible.builtin.shell: cat secret.json
-      register: result
-    - name: Save the Json data to a Variable as a Fact
+    - name: Get EC2 Instance infos
+      amazon.aws.ec2_instance_info:
+        instance_ids:
+          - "{{ ec2_new_instance.instances[0].instance_id }}"
+      register: ec2_instance_info
+
+    - name: Add host to group 'ec2_instances_group'
+      ansible.builtin.add_host:
+        name: "{{ ec2_instance_info.instances[0].public_dns_name }}"
+        groups: ec2_instances_group
+
+- name: Deploy ft_transcendence on freshly spawned EC2 instance
+  hosts: ec2_instances_group
+  become: true
+  remote_user: "{{ SSH_USER }}"
+  gather_facts: false
+  vars_files:
+    - secret/secret.yaml
+  tasks:
+    - name: Specify key file
       ansible.builtin.set_fact:
-        jsondata: "{{ result.stdout | from_json }}"
-    - name: Debug
-      ansible.builtin.debug: var=jsondata
+        ansible_ssh_private_key_file: "{{ KEY_PATH }}"
 
-    # - name: Uninstall old Docker packages
-    #   ansible.builtin.apt:
-    #     name: docker, docker-engine, docker.io, containerd, runc
-    #     state: absent
+    - name: Uninstall old Docker packages
+      ansible.builtin.apt:
+        name: docker, docker-engine, docker.io, containerd, runc
+        state: absent
     # - name: Update system and packages
     #   ansible.builtin.apt:
     #     update_cache: true
     #     upgrade: full
-    # - name: Install packages to allow apt to use a repository over HTTPS
-    #   ansible.builtin.apt:
-    #     name: ca-certificates, curl, gnupg, lsb-release
-    #     state: present
-    # - name: Add Docker's official GPG key
-    #   ansible.builtin.apt_key:
-    #     url: https://download.docker.com/linux/ubuntu/gpg
-    #     state: present
-    # - name: Set up the stable repository
-    #   ansible.builtin.apt_repository:
-    #     repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable
-    #     state: present
-    # - name: Update system and install Docker Engine
-    #   ansible.builtin.apt:
-    #     name: docker-ce, docker-ce-cli, containerd.io, docker-compose-plugin
-    #     state: present
-    #     update_cache: true
-    # - name: Add user to docker group
-    #   ansible.builtin.user:
-    #     name: "{{ ansible_user }}"
-    #     groups: docker
-    #     append: true
-    # - name: Install python3-pip
-    #   ansible.builtin.apt:
-    #     name: python3-pip
-    #     state: present
-    # - name: Install docker python module
-    #   ansible.builtin.pip:
-    #     name: docker, docker_compose
-    # - name: Install git
-    #   ansible.builtin.apt:
-    #     name: git
-    #     state: present
-    # - name: Clone ft_transcendence
-    #   ansible.builtin.git:
-    #     repo: https://github.com/kema-dev/ft_transcendence.git
-    #     dest: /home/{{ ansible_user }}/ft_transcendence
-    #     single_branch: fixing-docker
-    # - name: Populate environnement variables
-    #   ansible.builtin.copy:
-    #     src: ./docker.env
-    #     dest: /home/{{ ansible_user }}/ft_transcendence/.env
-    #     mode: '600'
-    #     owner: "{{ ansible_user }}"
-    #     group: "{{ ansible_user }}"
-    # - name: Run docker-compose
-    #   ansible.builtin.docker_compose:
-    #     project_src: /home/{{ ansible_user }}/ft_transcendence
-    #     state: up
-    #     build: true
-    #     profiles:
-    #       - prod
+    - name: Install packages to allow apt to use a repository over HTTPS
+      ansible.builtin.apt:
+        name: ca-certificates, curl, gnupg, lsb-release
+        state: present
+    - name: Add Docker's official GPG key
+      ansible.builtin.apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+    - name: Set up the stable repository
+      ansible.builtin.apt_repository:
+        repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu focal stable
+        state: present
+    - name: Update system and install Docker Engine
+      ansible.builtin.apt:
+        name: docker-ce, docker-ce-cli, containerd.io, docker-compose-plugin
+        state: present
+        update_cache: true
+    - name: Add user to docker group
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: true
+    - name: Install python3-pip
+      ansible.builtin.apt:
+        name: python3-pip
+        state: present
+    - name: Install docker python module
+      ansible.builtin.pip:
+        name: docker, docker_compose
+    - name: Install git
+      ansible.builtin.apt:
+        name: git
+        state: present
+    - name: Clone ft_transcendence
+      ansible.builtin.git:
+        repo: https://github.com/kema-dev/ft_transcendence.git
+        dest: /home/{{ SSH_USER }}/ft_transcendence
+        version: aws_deployment
+    - name: Populate environnement variables
+      ansible.builtin.copy:
+        src: ./secret/docker.env
+        dest: /home/{{ SSH_USER }}/ft_transcendence/.env
+        mode: '600'
+        owner: "{{ SSH_USER }}"
+        group: "{{ SSH_USER }}"
+    - name: Run docker-compose
+      ansible.builtin.docker_compose:
+        project_src: /home/{{ SSH_USER }}/ft_transcendence
+        state: present
+        build: true
+        profiles:
+          - prod
