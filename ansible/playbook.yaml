@@ -1,4 +1,4 @@
-- name: Spawn EC2 instance and configure it
+- name: Spawn EC2 instance, configure it, and wait for it to be up
   hosts: localhost
   connection: local
   gather_facts: false
@@ -20,23 +20,25 @@
         image_id: "{{ IMAGE_ID }}"
         tags:
           environment: "{{ ENVIRONMENT_TAG }}"
-        wait: true
+        state: running
       register: ec2_new_instance
 
-    # Need to wait for the instance to be ready
+    - name: Get public dns name
+      ansible.builtin.set_fact:
+        public_dns_name: "{{ ec2_new_instance.instances[0].public_dns_name }}"
 
-    - name: Get EC2 Instance infos
-      amazon.aws.ec2_instance_info:
-        instance_ids:
-          - "{{ ec2_new_instance.instances[0].instance_id }}"
-      register: ec2_instance_info
-
-    - name: Add host to group 'ec2_instances_group'
+    - name: Add host to 'ec2_instances_group'
       ansible.builtin.add_host:
-        name: "{{ ec2_instance_info.instances[0].public_dns_name }}"
+        name: "{{ ec2_new_instance.instances[0].public_dns_name }}"
         groups: ec2_instances_group
 
-- name: Deploy ft_transcendence on freshly spawned EC2 instance
+    - name: Add public dns name to secret/docker.env
+      ansible.builtin.lineinfile:
+        path: secret/docker.env
+        line: "FQDN=https://{{ public_dns_name }}"
+        state: present
+
+- name: Deploy ft_transcendence for production
   hosts: ec2_instances_group
   become: true
   remote_user: "{{ SSH_USER }}"
@@ -47,6 +49,11 @@
     - name: Specify key file
       ansible.builtin.set_fact:
         ansible_ssh_private_key_file: "{{ KEY_PATH }}"
+
+    - name: Wait for SSH to come up
+      ansible.builtin.wait_for_connection:
+        delay: 10
+        timeout: 60
 
     - name: Uninstall old Docker packages
       ansible.builtin.apt:
@@ -64,11 +71,11 @@
       ansible.builtin.apt_key:
         url: https://download.docker.com/linux/ubuntu/gpg
         state: present
-    - name: Set up the stable repository
+    - name: Set up Docker's stable repository
       ansible.builtin.apt_repository:
         repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu focal stable
         state: present
-    - name: Update system and install Docker Engine
+    - name: Update system and install Docker
       ansible.builtin.apt:
         name: docker-ce, docker-ce-cli, containerd.io, docker-compose-plugin
         state: present
@@ -82,7 +89,7 @@
       ansible.builtin.apt:
         name: python3-pip
         state: present
-    - name: Install docker python module
+    - name: Install Docker python module
       ansible.builtin.pip:
         name: docker, docker_compose
     - name: Install git
